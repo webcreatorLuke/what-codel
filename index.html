@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Code Place Helper</title>
+  <style>
+    :root{
+      --bg:#0f1724; --card:#0b1220; --muted:#9aa7bf; --accent:#6ee7b7;
+      --glass: rgba(255,255,255,0.03);
+    }
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;}
+    body{background:
+      linear-gradient(180deg, rgba(6,10,19,1) 0%, rgba(11,17,28,1) 100%);
+      color:#e6eef8; padding:28px; box-sizing:border-box;}
+    .container{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr 420px;gap:20px;}
+    .card{background:var(--card);border-radius:12px;padding:18px;box-shadow:0 6px 24px rgba(2,6,23,.6);border:1px solid rgba(255,255,255,0.03);}
+    h1{margin:0;font-size:20px}
+    label{display:block;color:var(--muted);margin-top:12px;font-size:13px}
+    textarea{width:100%;height:320px;border-radius:8px;background:var(--glass);border:1px solid rgba(255,255,255,0.03);padding:12px;color:inherit;font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;}
+    input[type=text], select{width:100%;padding:8px;border-radius:8px;background:transparent;border:1px solid rgba(255,255,255,0.06);color:inherit;}
+    .btn{display:inline-block;padding:10px 14px;border-radius:10px;background:linear-gradient(90deg,var(--accent),#3bd3a7);color:#052017;font-weight:600;border:none;cursor:pointer;margin-right:8px;}
+    .btn.secondary{background:transparent;border:1px solid rgba(255,255,255,0.06);color:var(--muted);}
+    .small{font-size:13px;color:var(--muted)}
+    pre{background:rgba(255,255,255,0.02);padding:12px;border-radius:8px;overflow:auto}
+    .tree{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono", monospace;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:8px}
+    .map-item{padding:10px;border-radius:8px;background:rgba(255,255,255,0.01);margin-bottom:8px}
+    .hint{color:var(--muted);font-size:13px;margin-top:8px}
+    .footer{grid-column:1/-1;text-align:center;color:var(--muted);font-size:13px;margin-top:12px}
+    .pill{display:inline-block;padding:6px 10px;border-radius:999px;background:rgba(255,255,255,0.03);font-size:13px;margin-right:6px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <h1>Code Place Helper</h1>
+      <p class="small">Paste code (or add filename) and get a suggested destination path for typical projects. Includes Roblox/Arduino/web/Node/Python heuristics.</p>
+
+      <label for="filename">Filename (optional) — e.g. <span class="pill">index.html</span> <span class="pill">main.py</span></label>
+      <input id="filename" placeholder="optional: main.js, styles.css, script.lua, sketch.ino" />
+
+      <label for="code">Your code</label>
+      <textarea id="code" placeholder="Paste your source file here..."></textarea>
+
+      <label class="small" style="margin-top:8px">Project style (helps determine folder layout)</label>
+      <select id="projectStyle">
+        <option value="auto">Auto detect</option>
+        <option value="web">Web (HTML/CSS/JS)</option>
+        <option value="node">Node / React</option>
+        <option value="roblox">Roblox (Lua)</option>
+        <option value="arduino">Arduino</option>
+        <option value="python">Python</option>
+      </select>
+
+      <div style="margin-top:12px">
+        <button class="btn" id="suggestBtn">Suggest destination</button>
+        <button class="btn secondary" id="clearBtn">Clear</button>
+        <button class="btn" id="downloadZipBtn" style="float:right;background:linear-gradient(90deg,#8bd3ff,#6eaaff)">Download ZIP</button>
+      </div>
+
+      <div id="result" style="margin-top:14px"></div>
+    </div>
+
+    <div class="card">
+      <h1>Preview & Mapping</h1>
+      <div id="mapArea" class="tree" style="min-height:120px">Suggest a file to see its destination here.</div>
+
+      <h2 style="font-size:14px;margin-top:14px">Why this suggestion?</h2>
+      <div id="reason" class="hint">Results will explain heuristics used (matches, keywords).</div>
+
+      <h2 style="font-size:14px;margin-top:12px">Common mappings</h2>
+      <div class="map-item"><strong>HTML / CSS / JS</strong><div class="small">index.html → root, css → styles.css or /css/, js → /js/ or /src/</div></div>
+      <div class="map-item"><strong>Node / React</strong><div class="small">src/index.js, src/App.jsx, public/index.html, package.json</div></div>
+      <div class="map-item"><strong>Python</strong><div class="small">src/<module>.py or scripts/</div></div>
+      <div class="map-item"><strong>Arduino</strong><div class="small">/arduino/<sketch>.ino</div></div>
+      <div class="map-item"><strong>Roblox</strong><div class="small">Server scripts → ServerScriptService/, LocalScripts → StarterPlayerScripts/ or StarterGui/</div></div>
+    </div>
+
+    <div class="footer">Built for you — paste code, get a destination. Tip: include a filename to improve detection.</div>
+  </div>
+
+  <!-- JSZip + FileSaver CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script>
+    // Heuristics-based suggestions
+    const heuristics = [
+      // simple mapping objects: test(fn, code, filename) => suggested path
+      {
+        name: 'HTML file',
+        test: (code, filename) => /<!doctype html>|<html[\s>]/i.test(code) || /\\.html$/i.test(filename),
+        path: (name) => name || 'index.html',
+        reason: 'Found HTML tags or .html filename'
+      },
+      {
+        name: 'CSS file',
+        test: (code, filename) => /\\.(class|id)\\s*\\{/.test(code) || /(^|\\.)css$/i.test(filename) || /:\\s*[a-zA-Z0-9\\-]+;/.test(code),
+        path: (name) => (name || 'styles.css').startsWith('css/') ? name : 'css/' + (name || 'styles.css'),
+        reason: 'Looks like CSS or .css filename'
+      },
+      {
+        name: 'JS module / script',
+        test: (code, filename) => /(^|\\n)\\s*(import\\s.+from\\s|export\\s|module\\.exports|require\\(|function\\s|const\\s\\w+\\s=)/.test(code) || /\\.js$|\\.mjs$|\\.cjs$/i.test(filename),
+        path: (name, projectStyle) => {
+          if (projectStyle === 'node' || /import\\s+React/.test(code)) return 'src/' + (name || 'index.js');
+          return (name || 'js/script.js').startsWith('js/') ? name : 'js/' + (name || 'script.js');
+        },
+        reason: 'Contains JS imports/exports, require(), or .js filename'
+      },
+      {
+        name: 'React / JSX',
+        test: (code, filename) => /import\\s+React|from\\s+['"]react['"]|class\\s+\\w+\\s+extends\\s+React|export\\s+default\\s+function|<([A-Z][A-Za-z0-9_]*)\\b/.test(code) || /\\.jsx?$/.test(filename),
+        path: (name) => 'src/' + (name || 'App.jsx'),
+        reason: 'Detected React/JSX patterns'
+      },
+      {
+        name: 'Python script',
+        test: (code, filename) => /^\\s*#.*python|def\\s+\\w+\\(|import\\s+sys|import\\s+os|print\\(|^\\s*if\\s+__name__/.test(code) || /\\.py$/i.test(filename),
+        path: (name) => 'src/' + (name || 'main.py'),
+        reason: 'Python keywords or .py filename'
+      },
+      {
+        name: 'Arduino sketch',
+        test: (code, filename) => /void\\s+setup\\(\\)|void\\s+loop\\(\\)|#include\\s+<Arduino.h>|\\.ino$/i.test(code) || /\\.ino$/i.test(filename),
+        path: (name) => 'arduino/' + (name || 'sketch.ino'),
+        reason: 'Detected Arduino setup()/loop() or .ino filename'
+      },
+      {
+        name: 'C / C++',
+        test: (code, filename) => /#include\\s+<|int\\s+main\\s*\\(|std::|using\\s+namespace\\s+std/.test(code) || /\\.c$|\\.cpp$|\\.h$|\\.hpp$/.test(filename),
+        path: (name) => 'src/' + (name || 'main.c'),
+        reason: 'C/C++ includes or main() signature'
+      },
+      {
+        name: 'Lua (Roblox) ServerScript',
+        test: (code, filename) => /game:GetService\\(|workspace\\.|Instance\\.new\\(|Players\\.LocalPlayer|PlayerAdded/.test(code) || /\\.lua$/.test(filename),
+        path: (name, projectStyle, code) => {
+          // Roblox-specific: detect local vs server
+          if (/LocalPlayer|StarterGui|Mouse|UserInputService|PlayerGui/.test(code)) return 'Roblox/StarterPlayerScripts/' + (name || 'LocalScript.lua');
+          if (/game:GetService\\(['"]Workspace|ServerScriptService|ReplicatedStorage/.test(code)) {
+            if (/ServerScriptService/.test(code)) return 'Roblox/ServerScriptService/' + (name || 'Script.lua');
+          }
+          // default to ServerScriptService for generic Roblox scripts
+          return 'Roblox/ServerScriptService/' + (name || 'Script.lua');
+        },
+        reason: 'Lua patterns and Roblox API usage'
+      },
+      {
+        name: 'SQL file',
+        test: (code, filename) => /CREATE\\s+TABLE|INSERT\\s+INTO|SELECT\\s+\\*/i.test(code) || /\\.sql$/i.test(filename),
+        path: (name) => 'db/' + (name || 'init.sql'),
+        reason: 'SQL statements or .sql filename'
+      },
+      {
+        name: 'Dockerfile',
+        test: (code, filename) => /^FROM\\s+|^CMD\\s+|^EXPOSE\\s+/m.test(code) || /^Dockerfile$/i.test(filename),
+        path: () => 'Dockerfile',
+        reason: 'Dockerfile directives'
+      },
+      {
+        name: 'Markdown/README',
+        test: (code, filename) => /^#\\s+\\w+/m.test(code) || /\\.md$/i.test(filename),
+        path: (name) => (name || 'README.md'),
+        reason: 'Markdown header or .md filename'
+      },
+      {
+        name: 'JSON config',
+        test: (code, filename) => /^[\\s\\{]*"(\\w|@)/.test(code) || /\\.json$/i.test(filename),
+        path: (name) => (name || 'package.json'),
+        reason: 'JSON-like structure or .json filename'
+      },
+      {
+        name: 'Shell script',
+        test: (code, filename) => /^#!\\/.+bash|^#!\\/.+sh|\\.sh$/i.test(code) || /\\.sh$/i.test(filename),
+        path: (name) => 'scripts/' + (name || 'script.sh'),
+        reason: 'Shebang or .sh filename'
+      }
+    ];
+
+    function detect(code, filename, projectStyle) {
+      filename = (filename || '').trim();
+      for (const h of heuristics) {
+        try {
+          if (h.test(code || '', filename)) {
+            const suggested = typeof h.path === 'function' ? h.path(filename || inferNameFromCode(code), projectStyle, code) : h.path;
+            return { name: h.name, path: suggested, reason: h.reason };
+          }
+        } catch (e) {
+          console.warn('heuristic err', e);
+        }
+      }
+      // fallback: suggest a generic src/ file with an inferred extension
+      const fallbackName = inferNameFromCode(code) || (filename || 'file.txt');
+      return { name: 'Unknown / generic', path: 'src/' + fallbackName, reason: 'No strong heuristics matched; using a generic src/ path' };
+    }
+
+    function inferNameFromCode(code) {
+      if (!code || code.trim().length === 0) return null;
+      // try simple heuristics: if code contains "class X" -> X.js or .py etc
+      const mClass = code.match(/class\\s+([A-Za-z0-9_]+)/);
+      if (mClass) return mClass[1] + '.js';
+      // if first line has a function name
+      const mFn = code.match(/function\\s+([A-Za-z0-9_]+)/);
+      if (mFn) return mFn[1] + '.js';
+      // fallback
+      // pull first token and give it an extension guess
+      const firstLine = code.trim().split('\\n')[0];
+      const words = firstLine.match(/[A-Za-z0-9_\\-]+/g);
+      if (words && words.length) {
+        let ext = 'txt';
+        if (/\\(/.test(firstLine)) ext = 'js';
+        if (/def\\s+|import\\s+/.test(code)) ext = 'py';
+        return words[0].toLowerCase() + '.' + ext;
+      }
+      return null;
+    }
+
+    // UI wiring
+    const codeEl = document.getElementById('code');
+    const fileEl = document.getElementById('filename');
+    const suggestBtn = document.getElementById('suggestBtn');
+    const mapArea = document.getElementById('mapArea');
+    const reasonEl = document.getElementById('reason');
+    const resultEl = document.getElementById('result');
+    const projectStyleEl = document.getElementById('projectStyle');
+    const clearBtn = document.getElementById('clearBtn');
+    const downloadZipBtn = document.getElementById('downloadZipBtn');
+
+    let lastSuggestion = null;
+
+    suggestBtn.addEventListener('click', () => {
+      const code = codeEl.value || '';
+      const filename = fileEl.value || '';
+      const style = projectStyleEl.value;
+      const suggestion = detect(code, filename, style);
+      lastSuggestion = { suggestion, code, filename };
+      renderSuggestion(suggestion);
+    });
+
+    clearBtn.addEventListener('click', () => {
+      codeEl.value = '';
+      fileEl.value = '';
+      mapArea.textContent = 'Suggest a file to see its destination here.';
+      reasonEl.textContent = 'Results will explain heuristics used (matches, keywords).';
+      resultEl.innerHTML = '';
+      lastSuggestion = null;
+    });
+
+    downloadZipBtn.addEventListener('click', async () => {
+      if (!lastSuggestion) {
+        alert('Run "Suggest destination" first (paste code and click Suggest).');
+        return;
+      }
+      const jszip = new JSZip();
+      // create necessary folders and place file
+      const path = lastSuggestion.suggestion.path;
+      // ensure path is simple and not traversal
+      if (path.includes('..')) {
+        alert('Unsafe path detected; aborting ZIP creation.');
+        return;
+      }
+      // split path and create folders
+      const filePath = path.replace(/^\\/+/, '');
+      jszip.file(filePath, lastSuggestion.code || '');
+      // optionally add README explaining where it was placed
+      jszip.file('PLACED_BY_CODE_PLACE_HELPER.txt', `File placed at: ${filePath}\nGenerated by Code Place Helper.\nSuggestion reason: ${lastSuggestion.suggestion.reason}`);
+      const blob = await jszip.generateAsync({ type: 'blob' });
+      const name = (lastSuggestion.filename && lastSuggestion.filename.trim()) ? lastSuggestion.filename.trim().replace(/\\W+/g,'_') : 'codefile';
+      const zipName = `${name}_placed.zip`;
+      // trigger download
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = zipName;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    });
+
+    function renderSuggestion(suggest) {
+      mapArea.innerHTML = '';
+      const p = document.createElement('div');
+      p.innerHTML = `<strong>Suggested path:</strong><div style="margin-top:8px;font-family:ui-monospace,monospace;padding:8px;border-radius:8px;background:rgba(255,255,255,0.02)">${escapeHtml(suggest.path)}</div>`;
+      mapArea.appendChild(p);
+
+      reasonEl.textContent = suggest.reason;
+
+      resultEl.innerHTML = `
+        <div style="margin-top:8px">
+          <div class="small"><strong>Type:</strong> ${escapeHtml(suggest.name)}</div>
+          <div class="small"><strong>Path:</strong> ${escapeHtml(suggest.path)}</div>
+        </div>
+      `;
+    }
+
+    function escapeHtml(s){ return (s+'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+
+    // auto-suggest on paste filename/file content quickly
+    fileEl.addEventListener('change', () => {
+      // auto-run suggestion if code area already has content
+      if (codeEl.value.trim()) suggestBtn.click();
+    });
+  </script>
+</body>
+</html>
